@@ -46,6 +46,7 @@ from homeassistant.helpers.typing import (
     ConfigType, 
     DiscoveryInfoType
 )
+from homeassistant.util.dt import utcnow
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,7 +55,6 @@ DEFAULT_ICON = "mdi:chart-line-variant"
 DEFAULT_PRECISION = 2
 
 CONF_FILTER_WINDOW_SIZE = "window_size"
-CONF_FILTER_UPDATE_INTERVAL = "update_interval"
 CONF_FILTER_PRECISION = "precision"
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
@@ -62,7 +62,6 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Optional(CONF_NAME): cv.string,
         vol.Optional(CONF_UNIQUE_ID): cv.string,
         vol.Required(CONF_FILTER_WINDOW_SIZE): vol.All(cv.time_period, cv.positive_timedelta),
-        vol.Required(CONF_FILTER_UPDATE_INTERVAL): vol.All(cv.time_period, cv.positive_timedelta),
         vol.Optional(CONF_FILTER_PRECISION, default=DEFAULT_PRECISION): vol.Coerce(int)
     }
 )
@@ -138,7 +137,6 @@ class SensorMovingAvg(SensorEntity):
         else:
             _LOGGER.debug(f"{self._name}: Not updating, last_changed != last_updated")
 
-
     async def async_added_to_hass(self):
         """Register callbacks."""
         self.async_on_remove(
@@ -146,6 +144,11 @@ class SensorMovingAvg(SensorEntity):
                 self.hass, [self._entity], self._update_filter_sensor_state_event
             )
         )
+
+    async def async_update(self):
+        """Update moving average when HA polls."""
+        self._state = self._avg.update(utcnow())
+        _LOGGER.debug(f"{self._name}: async_update = {self._state}")
 
     @property
     def name(self):
@@ -169,8 +172,8 @@ class SensorMovingAvg(SensorEntity):
 
     @property
     def should_poll(self):
-        """No polling needed."""
-        return False
+        """Use polling for regular updates."""
+        return True
 
     @property
     def extra_state_attributes(self):
