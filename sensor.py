@@ -196,12 +196,12 @@ class MovingAvg:
         self._precision = precision
         self._data = deque()
 
-    def update_value(self, val: float, timestamp: datetime) -> float | None:
+    def update_value(self, val: float, timestamp: datetime) -> float | int | None:
         """Update moving average with value and timestamp."""
         self._data.append(MovingAvg._tuple(val, timestamp))
         return self.update(timestamp)
 
-    def update(self, timestamp: datetime) -> float | None:
+    def update(self, timestamp: datetime) -> float | int | None:
         """Update moving average for timestamp."""
         ret_val = None
         size = len(self._data)
@@ -238,7 +238,12 @@ class MovingAvg:
                     weighted = MovingAvg._weighted(cur, timestamp, duration)
                     _LOGGER.debug(f"{self._name}: Adding tail {weighted} - {MovingAvg._value(cur)},{MovingAvg._timestamp(cur)}, {timestamp}")
                     ret_val = ret_val + weighted
-        return (None if ret_val is None else round(ret_val, self._precision))
+        if ret_val is None:
+            return None
+        elif self._precision > 0:
+            return round(ret_val, self._precision)
+        else:
+            return int(round(ret_val, self._precision))
 
     def data_points(self) -> int:
         """Number of data points currently in window."""
