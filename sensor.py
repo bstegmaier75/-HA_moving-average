@@ -212,11 +212,10 @@ class MovingAvg:
             start = timestamp - self._window
             _LOGGER.debug(f"{self._name}: Window starts {start}")
             removed = None
-            while MovingAvg._timestamp(self._data[0]) < start:
+            while ((len(self._data) > 1) and (MovingAvg._timestamp(self._data[0]) < start)):
                 removed = self._data.popleft()
                 _LOGGER.debug(f"{self._name}: Removing {MovingAvg._value(removed)},{MovingAvg._timestamp(removed)}")
-            if ((removed is not None) and 
-               ((len(self._data) == 0) or (MovingAvg._timestamp(self._data[0]) > start))):
+            if ((removed is not None) and (MovingAvg._timestamp(self._data[0]) > start)):
                 self._data.appendleft(MovingAvg._tuple(MovingAvg._value(removed), start))
                 _LOGGER.debug(f"{self._name}: Adding back {MovingAvg._value(removed)}")
             # compute avg
@@ -237,7 +236,7 @@ class MovingAvg:
                     prev = cur
                 if timestamp > MovingAvg._timestamp(cur):
                     weighted = MovingAvg._weighted(cur, timestamp, duration)
-                    _LOGGER.debug(f"{self._name}: Adding {weighted} - {MovingAvg._value(cur)},{MovingAvg._timestamp(cur)}, {timestamp}")
+                    _LOGGER.debug(f"{self._name}: Adding tail {weighted} - {MovingAvg._value(cur)},{MovingAvg._timestamp(cur)}, {timestamp}")
                     ret_val = ret_val + weighted
         return (None if ret_val is None else round(ret_val, self._precision))
 
