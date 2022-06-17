@@ -140,7 +140,8 @@ class SensorMovingAvg(SensorEntity):
                 self._state = self._avg.update_value(new_val, new_state.last_changed)
                 self.async_write_ha_state()
             except ValueError:
-                _LOGGER.error(f"{self._name}: State ({new_state.state}) is not a number, ignoring")
+                self._timeout_start = utcnow()
+                _LOGGER.error(f"{self._name}: State ({new_state.state}) is not a number, starting timeout")
         else:
             _LOGGER.debug(f"{self._name}: Not updating, last_changed != last_updated")
 
