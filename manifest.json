@@ -1,10 +1,10 @@
 {
     "domain": "moving-average",
     "name": "Moving Average Filter",
-    "documentation": "",
+    "documentation": "https://github.com/bstegmaier75/HA_moving-average",
     "dependencies": [],
-    "codeowners": [],
+    "codeowners": ["@bstegmaier75", "@dgomes"],
     "quality_scale": "internal",
     "iot_class": "local_push",
-    "version": "0.1.0"
+    "version": "1.0.0"
 }
