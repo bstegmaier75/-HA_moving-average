@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import voluptuous as vol
-import homeassistant.helpers.config_validation as cv
 from collections import deque
 from datetime import (
     datetime, 
@@ -53,16 +52,19 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_ICON = "mdi:chart-line-variant"
 DEFAULT_PRECISION = 2
+DEFAULT_TIMEOUT = timedelta(minutes=1)
 
 CONF_FILTER_WINDOW_SIZE = "window_size"
 CONF_FILTER_PRECISION = "precision"
+CONF_FILTER_TIMEOUT = "timeout"
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_ENTITY_ID): cv.entity_domain(SENSOR_DOMAIN),
         vol.Optional(CONF_NAME): cv.string,
         vol.Optional(CONF_UNIQUE_ID): cv.string,
         vol.Required(CONF_FILTER_WINDOW_SIZE): vol.All(cv.time_period, cv.positive_timedelta),
-        vol.Optional(CONF_FILTER_PRECISION, default=DEFAULT_PRECISION): vol.Coerce(int)
+        vol.Optional(CONF_FILTER_PRECISION, default=DEFAULT_PRECISION): vol.Coerce(int),
+        vol.Optional(CONF_FILTER_TIMEOUT, default=DEFAULT_TIMEOUT): vol.All(cv.time_period, cv.positive_timedelta)
     }
 )
 
@@ -79,20 +81,23 @@ async def async_setup_platform(
     name = config.get(CONF_NAME)
     unique_id = config.get(CONF_UNIQUE_ID)
     entity_id = config.get(CONF_ENTITY_ID)
+    timeout = config.get(CONF_FILTER_TIMEOUT)
     avg = MovingAvg(name, config.get(CONF_FILTER_WINDOW_SIZE), config.get(CONF_FILTER_PRECISION))
 
-    async_add_entities([SensorMovingAvg(name, unique_id, entity_id, avg)])
+    async_add_entities([SensorMovingAvg(name, unique_id, entity_id, timeout, avg)])
 
 
 class SensorMovingAvg(SensorEntity):
     """Representation of moving average sensor."""
 
-    def __init__(self, name, unique_id, entity_id, avg) -> None:
+    def __init__(self, name, unique_id, entity_id, timeout, avg) -> None:
         """Initialize sensor."""
         self._name = name
         self._attr_unique_id = unique_id
         self._entity = entity_id
         self._avg = avg
+        self._timeout = timeout
+        self._timeout_start = None
         self._unit_of_measurement = None
         self._state = None
         self._icon = None
@@ -108,18 +113,16 @@ class SensorMovingAvg(SensorEntity):
     @callback
     def _update_filter_sensor_state(self, new_state):
         """Process device state changes."""
-        if new_state is None:
-            _LOGGER.debug("Updating %s, new_state is None", self._name)
-            self._state = None
-            self.async_write_ha_state()
+        # start timeout on None/unknown/unavailable state
+        if (new_state is None) or (new_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE)):
+            _LOGGER.debug(f"{self._name}: Received None/unknown/unavailable state, starting timeout")
+            self._timeout_start = utcnow()
             return
 
-        if new_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
-            self._state = new_state.state
-            self.async_write_ha_state()
-            return
-
+        # state has changed if last_changed has changed
         if new_state.last_changed == new_state.last_updated:
+            # reset possible timeout
+            self._timeout_start = None
             # get attributes from entitity
             if self._icon is None:
                 self._icon = new_state.attributes.get(ATTR_ICON, DEFAULT_ICON)
@@ -130,10 +133,14 @@ class SensorMovingAvg(SensorEntity):
             if self._unit_of_measurement is None:
                 self._unit_of_measurement = new_state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
             # update moving average
-            new_val = float(new_state.state)
-            _LOGGER.debug(f"{self._name}: Updating with {new_val}")
-            self._state = self._avg.update_value(new_val, new_state.last_changed)
-            self.async_write_ha_state()
+            new_val = None
+            try:
+                new_val = float(new_state.state)
+                _LOGGER.debug(f"{self._name}: Updating with {new_val}")
+                self._state = self._avg.update_value(new_val, new_state.last_changed)
+                self.async_write_ha_state()
+            except ValueError:
+                _LOGGER.error(f"{self._name}: State ({new_state.state}) is not a number, ignoring")
         else:
             _LOGGER.debug(f"{self._name}: Not updating, last_changed != last_updated")
 
@@ -147,8 +154,23 @@ class SensorMovingAvg(SensorEntity):
 
     async def async_update(self):
         """Update moving average when HA polls."""
-        self._state = self._avg.update(utcnow())
-        _LOGGER.debug(f"{self._name}: async_update = {self._state}")
+        now = utcnow()
+        if self._timeout_start is not None:
+            # active timeout
+            _LOGGER.debug(f"{self._name}: State is unknown/unavailable, ignoring")
+            if now > self._timeout_start + self._timeout:
+                _LOGGER.debug(f"{self._name}: Timeout, resetting moving average")
+                self._state = STATE_UNAVAILABLE
+                self._avg.reset()
+        else:
+            # update moving average
+            self._state = self._avg.update(now)
+            _LOGGER.debug(f"{self._name}: async_update = {self._state}")
+
+    @property
+    def available(self):
+        """Sensor availability."""
+        return not ((self._state is None) or (self._state == STATE_UNAVAILABLE))
 
     @property
     def name(self):
@@ -245,20 +267,27 @@ class MovingAvg:
         else:
             return int(round(ret_val, self._precision))
 
+    def reset(self) -> None:
+        """Reset window data."""
+        self._data = deque()
+
     def data_points(self) -> int:
         """Number of data points currently in window."""
         return len(self._data)
 
     def _timestamp(tuple: Tuple[float, datetime]) -> datetime:
+        """Get timestamp from data object."""
         return tuple[1]
 
     def _value(tuple: Tuple[float, datetime]) -> float:
+        """Get value from data object."""
         return tuple[0]
 
     def _tuple(val: float, timestamp: datetime) -> Tuple[float, datetime]:
+        """Get data object from value and timestamp."""
         return [val, timestamp]
 
     def _weighted(cur: Tuple[float, datetime], next: datetime, duration: float) -> float:
+        """Get weighted value of a data point."""
         delta = (next - MovingAvg._timestamp(cur)).total_seconds()
         return (MovingAvg._value(cur) * delta / duration)
-
